@@ -1,0 +1,245 @@
+var AOI = roi
+Map.addLayer(AOI)
+Map.centerObject(AOI)
+
+var startyear = 2000; 
+var endyear = 2020; 
+
+
+// make a list with years
+var years = ee.List.sequence(startyear, endyear);
+
+var l5Bands = ['B1','B2','B3','B4','B5','B7'];
+var l5names = ['blue','green','red','nir','swir1','swir2'];
+
+var l7Bands = ['B1','B2','B3','B4','B5','B7'];
+var l7names = ['blue','green','red','nir','swir1','swir2'];
+
+var l8Bands = ['B2','B3','B4','B5','B6','B7',];
+var l8names = ['blue','green','red','nir','swir1','swir2'];
+
+var L8 = ee.ImageCollection('LANDSAT/LC08/C01/T1_TOA')
+.filterMetadata('CLOUD_COVER','less_than', 1)
+.filterDate('2000-1-1','2010-12-30')
+.filterBounds(AOI)
+.select(l8Bands,l8names)
+
+
+var L7 = ee.ImageCollection("LANDSAT/LE07/C01/T1_TOA")
+.filterDate('2010-1-1','2015-12-30')
+.filterMetadata('CLOUD_COVER','less_than', 5)
+.filterBounds(AOI)
+.select(l7Bands,l7names)
+
+
+var L5 = ee.ImageCollection("LANDSAT/LT05/C01/T1_TOA")
+.filterDate('2015-1-1','2020-12-30')
+.filterMetadata('CLOUD_COVER','less_than', 3)
+.filterBounds(AOI)
+.select(l5Bands,l5names)
+ 
+
+var full_coll = L8.merge(L7).merge(L5)
+
+var anual_collection = ee.ImageCollection.fromImages(years.map(function (y) {
+      var anual = full_coll.filter(ee.Filter.calendarRange(y, y, 'year'))
+                    .median().clip(AOI);
+      
+      var NDBI = anual.expression(
+      '(SWIR - NIR) / (SWIR + NIR)', {
+       'SWIR': anual.select('swir1'),
+       'NIR': anual.select('nir')
+      }).rename('NDBI');
+      
+      var NDVI = anual.expression(
+      '(NIR - RED) / (NIR + RED)', {
+       'NIR': anual.select('nir'),
+       'RED': anual.select('red')
+      }).rename('NDVI');
+      
+      var NDWI = anual.expression(
+      '(NIR - SWIR) / (NIR + SWIR)', {
+       'SWIR': anual.select('swir1'),
+       'NIR': anual.select('nir')
+      }).rename('NDWI');
+      
+      var EVI = anual.expression(
+         '2.5 * (nir - red) / (nir + 6 * red - 7.5 * blue + 1)' , {
+           'nir': anual.select('nir'),
+           'red': anual.select('red'),
+           'blue': anual.select('blue')
+         }).rename('EVI');
+         
+      var SWI = anual.expression( '(nir-swir1)/(nir-swir1)' , {
+        'nir': anual.select('nir'),
+        'swir1': anual.select('swir1')
+      }).rename('SWI')
+         
+         
+          
+      return anual.addBands(NDBI).addBands(NDVI).addBands(NDWI).addBands(EVI).addBands(SWI).set('year',y)
+  }));
+
+print(anual_collection)
+
+var viz = {min:0,max:0.3,bands:"red,green,blue"};
+
+ 
+
+/// imagery 
+
+var img_2020 = anual_collection.filter(ee.Filter.eq('year',2020)).mosaic()
+Map.addLayer(img_2020,viz,"Landsat 2020",false);
+
+var img_2015 = anual_collection.filter(ee.Filter.eq('year',2015)).mosaic()
+Map.addLayer(img_2015,viz,"Landsat 2015",false);
+
+var img_2010= anual_collection.filter(ee.Filter.eq('year',2010)).mosaic()
+Map.addLayer(img_2010,viz,"Landsat 2010",false);
+
+var img_2000= anual_collection.filter(ee.Filter.eq('year',2000)).mosaic()
+Map.addLayer(img_2000,viz,"Landsat 2000");
+ 
+
+var samples_2000 = Water_2000.merge(Forest_2000).merge(Buildup_2000).merge(Agriculture_2000).merge(Bareland_2000) 
+var samples_2010 = Water_2010.merge(Forest_2010).merge(Buildup_2010).merge(Agriculture_2010).merge(Bareland_2010)
+var samples_2015 = Water_2015.merge(Forest_2015).merge(Buildup_2015).merge(Agriculture_2015).merge(Bareland_2015)
+var samples_2020 = Water_2020.merge(Forest_2020).merge(Buildup_2020).merge(Agriculture_2020).merge(Bareland_2020) 
+
+
+ 
+
+var s2Bands = ['blue','green','red','nir','swir1','swir2','NDBI','NDVI','NDWI','EVI','SWI'];
+var predictionBands = s2Bands
+
+
+var TrainingImage_2000 = img_2000.select(predictionBands).float();
+var TrainingImage_2010 = img_2010.select(predictionBands).float();
+var TrainingImage_2015 = img_2015.select(predictionBands).float();
+var TrainingImage_2020 = img_2020.select(predictionBands).float();
+
+print(TrainingImage_2020)
+
+var classifierTraining_2020 = TrainingImage_2020.select(predictionBands).sampleRegions({collection:samples_2020, properties: ['class'], scale: 30 });
+var classifierTraining_2015 = TrainingImage_2015.select(predictionBands).sampleRegions({collection: samples_2015, properties: ['class'], scale: 30 });
+var classifierTraining_2010 = TrainingImage_2010.select(predictionBands).sampleRegions({collection: samples_2010, properties: ['class'], scale: 30 });
+var classifierTraining_2000 = TrainingImage_2000.select(predictionBands).sampleRegions({collection: samples_2000, properties: ['class'], scale: 30 });
+
+
+var classifierTraining = classifierTraining_2000.merge(classifierTraining_2010).merge(classifierTraining_2015).merge(classifierTraining_2020)
+
+print(classifierTraining)
+
+ // Start
+ 
+ 
+var withRandom = classifierTraining.randomColumn();
+
+var split = 0.7;  // Roughly 70% training, 30% testing.
+var trainingPartition = withRandom.filter(ee.Filter.lt('random', split));
+var testingPartition = withRandom.filter(ee.Filter.gte('random', split));
+//print(testingPartition)
+
+var RF = ee.Classifier.smileRandomForest(150).train({features:trainingPartition, classProperty:'class', inputProperties: predictionBands});
+  
+print('RF train error matrix: ', RF.confusionMatrix());
+print('RF train accuracy: ', RF.confusionMatrix().accuracy());
+print('RF train Kappa: ', RF.confusionMatrix().kappa());
+
+var test = testingPartition.classify(RF);
+
+print(test)
+
+var testAccuracy = test.errorMatrix('class', 'classification');
+print('RF test error matrix: ', testAccuracy);  
+print('RF test accuracy: ', testAccuracy.accuracy());
+print('RF test Kappa: ', testAccuracy.kappa());
+print(' producer accuracy : ', testAccuracy.producersAccuracy());
+print(' consumer accuracy : ', testAccuracy.consumersAccuracy());
+
+
+
+var classified_RF_2000 = img_2000.select(predictionBands).classify(RF);
+var classified_RF_2010 = img_2010.select(predictionBands).classify(RF);
+var classified_RF_2015 = img_2015.select(predictionBands).classify(RF);
+var classified_RF_2020 = img_2020.select(predictionBands).classify(RF);
+ 
+
+
+Map.addLayer(classified_RF_2000, {min: 0, max: 5,
+  palette: ['blue','green','red','darkgreen' ,'yellow']}, 
+ 'LULC 2000'); 
+ 
+Map.addLayer(classified_RF_2010, {min: 0, max: 5,
+  palette: ['blue','green','red','darkgreen' ,'yellow']}, 
+ 'LULC 2010'); 
+ 
+Map.addLayer(classified_RF_2015, {min: 0, max: 5,
+  palette: ['blue','green','red','darkgreen' ,'yellow']}, 
+ 'LULC 2015'); 
+ 
+Map.addLayer(classified_RF_2020, {min: 0, max: 5,
+  palette: ['blue','green','red','darkgreen' ,'yellow']}, 
+ 'LULC 2020'); 
+ 
+  
+ 
+ 
+Export.image.toDrive({
+    image: classified_RF_2000, 
+    description: "Ordos_2000", 
+    region: AOI, 
+    scale: 30 ,
+    maxPixels: 1e13}) 
+    
+Export.image.toDrive({
+    image: classified_RF_2010, 
+    description: "Ordos_2010", 
+    region: AOI, 
+    scale: 30 ,
+    maxPixels: 1e13}) 
+ 
+Export.image.toDrive({
+    image: classified_RF_2015, 
+    description: "Ordos_2015", 
+    region: AOI, 
+    scale: 30 ,
+    maxPixels: 1e13}) 
+    
+Export.image.toDrive({
+    image: classified_RF_2020, 
+    description: "Ordos_2020", 
+    region: AOI, 
+    scale: 30 ,
+    maxPixels: 1e13}) 
+ 
+ 
+ /// End
+ 
+ 
+var LULC = anual_collection.map(function(image){
+  var classified_RF = image.select(predictionBands).classify(RF);
+  return classified_RF.copyProperties(image, ['year']);
+})
+
+
+var classfied_image_2020 = LULC.filter(ee.Filter.eq('year',2020)).first()
+Map.addLayer(classfied_image_2020, {min: 0, max: 5,
+  palette: ['red'
+    ,'yellow' //0
+    ,'blue'
+    ,'green' //1
+    ,'orange'
+    ,'darkgreen']}, //4
+ 'Random_Forest 2020'); 
+
+
+var classfied_image_2000 = LULC.filter(ee.Filter.eq('year',2000)).first()
+Map.addLayer(classfied_image_2000, {min: 0, max: 5,
+  palette: ['red'
+    ,'yellow' //0
+    ,'blue'
+    ,'green' //1
+    ,'orange'
+    ,'darkgreen']}, //4
+ 'Random_Forest 2000'); 
